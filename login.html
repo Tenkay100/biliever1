@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Client Login | Federal Reserve Bank</title>
+  <link rel="stylesheet" href="assets/css/main.css">
+  <link rel="stylesheet" href="assets/css/animations.css">
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
+</head>
+<body class="flex-center" style="min-height: 100vh; background: var(--bg-800);">
+
+  <div class="container flex-center w-full">
+    <div class="card card-glass animate-scale-in" style="width: 100%; max-width: 440px; padding: 40px;">
+
+      <div class="text-center mb-32">
+        <div class="flex-center mb-16">
+          <div class="brand-logo"
+            style="width: 48px; height: 48px; background: linear-gradient(135deg, var(--primary), var(--accent)); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+            <i class="ph-fill ph-bank" style="font-size: 1.8rem; color: #fff;"></i>
+          </div>
+        </div>
+        <h2>Welcome Back</h2>
+        <p class="mt-8">Sign in to your client portal.</p>
+      </div>
+
+      <form id="login-form" class="form-group gap-16" autocomplete="off">
+        <div id="login-alert" class="alert hidden" style="display:none;"></div>
+
+        <div class="form-group">
+          <label class="form-label">Email Address</label>
+          <div class="input-group">
+            <i class="ph-bold ph-envelope-simple input-icon"></i>
+            <input type="email" id="email" class="form-input" placeholder="Enter your email" required autocomplete="new-password">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div class="flex-between">
+            <label class="form-label">Password</label>
+            <a href="forgot-password.html" class="text-xs">Forgot password?</a>
+          </div>
+          <div class="input-group">
+            <i class="ph-bold ph-lock-key input-icon"></i>
+            <input type="password" id="password" class="form-input" placeholder="Enter your password" required autocomplete="new-password">
+          </div>
+        </div>
+
+        <button type="submit" id="submit-btn" class="btn btn-primary w-full mt-8" style="padding: 14px;">
+          <span>Secure Sign In</span>
+          <i class="ph-bold ph-arrow-right"></i>
+        </button>
+      </form>
+
+      <div class="text-center mt-24 text-sm text-muted">
+        Don't have an account? <a href="register.html" class="font-bold">Open Account</a>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // ── UTILITIES ──
+    function getLocalUsers() {
+      try { return JSON.parse(localStorage.getItem('frb_users_store') || '[]'); } catch(e) { return []; }
+    }
+
+    function findLocalUser(email) {
+      var users = getLocalUsers();
+      var clean = (email || '').trim().toLowerCase();
+      for (var i = 0; i < users.length; i++) {
+        if (users[i].email === clean) return users[i];
+      }
+      return null;
+    }
+
+    function showAlert(type, msg) {
+      var alertBox = document.getElementById('login-alert');
+      alertBox.className = 'alert alert-' + type + ' animate-fade-in';
+      alertBox.innerHTML = msg;
+      alertBox.style.display = 'block';
+      alertBox.classList.remove('hidden');
+    }
+
+    // ── CHECK IF ALREADY LOGGED IN ──
+    (function checkSession() {
+      try {
+        var mock = localStorage.getItem('mock_session');
+        if (mock) {
+          var s = JSON.parse(mock);
+          var lastActivity = parseInt(localStorage.getItem('aff_last_activity') || '0');
+          if (s && s.user && (Date.now() - lastActivity) < 900000) {
+            var profile = JSON.parse(localStorage.getItem('aff_user_profile') || 'null');
+            if (profile && profile.status !== 'suspended') {
+              window.location.href = 'dashboard.html';
+              return;
+            }
+          }
+        }
+      } catch(e) {}
+    })();
+
+    // ── FIREBASE INIT (for Firestore fallback) ──
+    var firebaseConfig = {
+      apiKey: "AIzaSyDB71JU_3MK6srHnLl5jdPm9WmXFCtgK8U",
+      authDomain: "federalreserve-7d9fc.firebaseapp.com",
+      projectId: "federalreserve-7d9fc",
+      storageBucket: "federalreserve-7d9fc.firebasestorage.app",
+      messagingSenderId: "1061641406642",
+      appId: "1:1061641406642:web:439d1c273eaa0bc90521ab"
+    };
+
+    var fbDb = null;
+    try {
+      if (typeof firebase !== 'undefined') {
+        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+        fbDb = firebase.firestore();
+      }
+    } catch(e) { console.warn('Firebase init:', e); }
+
+    // ── FORM SUBMIT ──
+    var form = document.getElementById('login-form');
+    var submitBtn = document.getElementById('submit-btn');
+
+    form.addEventListener('submit', async function(e) {
+      e.preventDefault();
+
+      var email = document.getElementById('email').value.trim().toLowerCase();
+      var password = document.getElementById('password').value;
+
+      if (!email || !password) {
+        showAlert('danger', '<i class="ph-bold ph-warning-circle"></i> Please enter your email and password.');
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<i class="ph-bold ph-spinner spinner"></i> Authenticating...';
+      document.getElementById('login-alert').classList.add('hidden');
+      document.getElementById('login-alert').style.display = 'none';
+
+      // 1. Try local user store first
+      var localUser = findLocalUser(email);
+      if (localUser) {
+        // Check password
+        var storedPwd = localStorage.getItem('aff_mock_pwd_' + email);
+        var pwdMatch = false;
+        if (localUser.password) {
+          pwdMatch = (localUser.password === password);
+        } else if (storedPwd) {
+          pwdMatch = (storedPwd === password);
+        } else {
+          pwdMatch = true; // No password stored yet, allow
+        }
+
+        if (!pwdMatch) {
+          showAlert('danger', '<i class="ph-bold ph-warning-circle"></i> Invalid email or password.');
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = '<span>Secure Sign In</span><i class="ph-bold ph-arrow-right"></i>';
+          return;
+        }
+
+        if (localUser.status === 'suspended') {
+          showAlert('danger', '<i class="ph-bold ph-warning-circle"></i> Your account has been suspended.');
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = '<span>Secure Sign In</span><i class="ph-bold ph-arrow-right"></i>';
+          return;
+        }
+
+        // Login success
+        var authId = localUser.auth_id || localUser.id;
+        localStorage.setItem('mock_session', JSON.stringify({ user: { id: authId, email: localUser.email } }));
+        localStorage.setItem('aff_user_profile', JSON.stringify(localUser));
+        localStorage.setItem('aff_last_activity', Date.now().toString());
+        localStorage.setItem('aff_mock_pwd_' + email, password);
+
+        showAlert('success', '<i class="ph-bold ph-check-circle"></i> Login successful! Redirecting to dashboard...');
+        setTimeout(function() { window.location.href = 'dashboard.html'; }, 1000);
+        return;
+      }
+
+      // 2. Fallback: try Firestore
+      if (fbDb) {
+        try {
+          var snapshot = await fbDb.collection('users').where('email', '==', email).limit(1).get();
+          if (!snapshot.empty) {
+            var doc = snapshot.docs[0];
+            var userData = { id: doc.id, ...doc.data() };
+
+            var storedPwd2 = localStorage.getItem('aff_mock_pwd_' + email);
+            var pwdOk = false;
+            if (userData.password) {
+              pwdOk = (userData.password === password);
+            } else if (storedPwd2) {
+              pwdOk = (storedPwd2 === password);
+            } else {
+              pwdOk = true;
+            }
+
+            if (!pwdOk) {
+              showAlert('danger', '<i class="ph-bold ph-warning-circle"></i> Invalid email or password.');
+              submitBtn.disabled = false;
+              submitBtn.innerHTML = '<span>Secure Sign In</span><i class="ph-bold ph-arrow-right"></i>';
+              return;
+            }
+
+            if (userData.status === 'suspended') {
+              showAlert('danger', '<i class="ph-bold ph-warning-circle"></i> Your account has been suspended.');
+              submitBtn.disabled = false;
+              submitBtn.innerHTML = '<span>Secure Sign In</span><i class="ph-bold ph-arrow-right"></i>';
+              return;
+            }
+
+            // Save to local store for next time
+            try {
+              var users2 = JSON.parse(localStorage.getItem('frb_users_store') || '[]');
+              var exists = users2.some(function(u) { return u.email === email; });
+              if (!exists) users2.push(userData);
+              localStorage.setItem('frb_users_store', JSON.stringify(users2));
+            } catch(ex) {}
+
+            var authId2 = userData.auth_id || userData.id;
+            localStorage.setItem('mock_session', JSON.stringify({ user: { id: authId2, email: userData.email } }));
+            localStorage.setItem('aff_user_profile', JSON.stringify(userData));
+            localStorage.setItem('aff_last_activity', Date.now().toString());
+            localStorage.setItem('aff_mock_pwd_' + email, password);
+
+            showAlert('success', '<i class="ph-bold ph-check-circle"></i> Login successful! Redirecting...');
+            setTimeout(function() { window.location.href = 'dashboard.html'; }, 1000);
+            return;
+          }
+        } catch(fbErr) {
+          console.warn('Firestore login fallback error:', fbErr);
+        }
+      }
+
+      // No user found
+      showAlert('danger', '<i class="ph-bold ph-warning-circle"></i> No account found with that email. <a href="register.html">Create an account</a>');
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = '<span>Secure Sign In</span><i class="ph-bold ph-arrow-right"></i>';
+    });
+  </script>
+</body>
+</html>

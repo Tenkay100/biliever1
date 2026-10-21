@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Open Account | Federal Reserve Bank</title>
+  <link rel="stylesheet" href="assets/css/main.css">
+  <link rel="stylesheet" href="assets/css/animations.css">
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
+</head>
+<body class="flex-center" style="min-height: 100vh; background: var(--bg-800); padding: 40px 0;">
+  
+  <div class="container flex-center w-full">
+    <div class="card card-glass animate-scale-in" style="width: 100%; max-width: 500px; padding: 40px;">
+      
+      <div class="text-center mb-32">
+        <div class="flex-center mb-16">
+          <div class="brand-logo" style="width: 48px; height: 48px; background: linear-gradient(135deg, var(--primary), var(--accent)); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+            <i class="ph-fill ph-bank" style="font-size: 1.8rem; color: #fff;"></i>
+          </div>
+        </div>
+        <h2>Open an Account</h2>
+        <p class="mt-8">Join the future of digital banking.</p>
+      </div>
+
+      <form id="register-form" class="form-group gap-16">
+        <div id="register-alert" class="alert hidden"></div>
+
+        <div class="form-group">
+          <label class="form-label">Full Legal Name</label>
+          <div class="input-group">
+            <i class="ph-bold ph-user input-icon"></i>
+            <input type="text" id="fullName" class="form-input" placeholder="John Doe" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Email Address</label>
+          <div class="input-group">
+            <i class="ph-bold ph-envelope-simple input-icon"></i>
+            <input type="email" id="email" class="form-input" placeholder="john@example.com" required>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Phone Number (Optional)</label>
+          <div class="input-group">
+            <i class="ph-bold ph-phone input-icon"></i>
+            <input type="tel" id="phone" class="form-input" placeholder="+1 (555) 000-0000">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Home Address</label>
+          <div class="input-group">
+            <i class="ph-bold ph-map-pin input-icon"></i>
+            <input type="text" id="address" class="form-input" placeholder="123 Main St, City, State">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Social Security Number (SSN) <span class="text-xs text-muted">(Optional)</span></label>
+          <div class="input-group">
+            <i class="ph-bold ph-identification-badge input-icon"></i>
+            <input type="text" id="ssn" class="form-input" placeholder="XXX-XX-XXXX">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Create Password</label>
+          <div class="input-group">
+            <i class="ph-bold ph-lock-key input-icon"></i>
+            <input type="password" id="password" class="form-input" placeholder="Minimum 8 characters" required minlength="8">
+          </div>
+          <div class="form-hint mt-8">Must contain at least 8 characters.</div>
+        </div>
+
+        <div class="form-group mt-8 flex" style="flex-direction: row; align-items: flex-start; gap: 10px;">
+          <input type="checkbox" id="terms" required style="margin-top: 4px;">
+          <label for="terms" class="text-xs text-muted">I agree to the <a href="#">Terms of Service</a> and <a href="#">Privacy Policy</a>.</label>
+        </div>
+
+        <button type="submit" id="submit-btn" class="btn btn-primary w-full mt-16" style="padding: 14px;">
+          <span>Create Account</span>
+          <i class="ph-bold ph-arrow-right"></i>
+        </button>
+      </form>
+
+      <div class="text-center mt-24 text-sm text-muted">
+        Already have an account? <a href="login.html" class="font-bold">Sign In</a>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // ── UTILITIES ──
+    function generateUUID() {
+      if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        try { return crypto.randomUUID(); } catch(e) {}
+      }
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
+
+    function generateAccountNumber() {
+      var prefix = '4471';
+      for (var i = 0; i < 8; i++) prefix += Math.floor(Math.random() * 10);
+      return prefix;
+    }
+
+    function getLocalUsers() {
+      try { return JSON.parse(localStorage.getItem('frb_users_store') || '[]'); } catch(e) { return []; }
+    }
+
+    function saveLocalUsers(users) {
+      try { localStorage.setItem('frb_users_store', JSON.stringify(users)); } catch(e) {}
+    }
+
+    function findLocalUser(email) {
+      var users = getLocalUsers();
+      var clean = (email || '').trim().toLowerCase();
+      for (var i = 0; i < users.length; i++) {
+        if (users[i].email === clean) return users[i];
+      }
+      return null;
+    }
+
+    // ── CHECK IF ALREADY LOGGED IN ──
+    (function checkSession() {
+      try {
+        var mock = localStorage.getItem('mock_session');
+        if (mock) {
+          var s = JSON.parse(mock);
+          var lastActivity = parseInt(localStorage.getItem('aff_last_activity') || '0');
+          if (s && s.user && (Date.now() - lastActivity) < 900000) {
+            var profile = JSON.parse(localStorage.getItem('aff_user_profile') || 'null');
+            if (profile && profile.status !== 'suspended') {
+              window.location.href = 'dashboard.html';
+              return;
+            }
+          }
+        }
+      } catch(e) {}
+    })();
+
+    // ── FIREBASE INIT ──
+    var firebaseConfig = {
+      apiKey: "AIzaSyDB71JU_3MK6srHnLl5jdPm9WmXFCtgK8U",
+      authDomain: "federalreserve-7d9fc.firebaseapp.com",
+      projectId: "federalreserve-7d9fc",
+      storageBucket: "federalreserve-7d9fc.firebasestorage.app",
+      messagingSenderId: "1061641406642",
+      appId: "1:1061641406642:web:439d1c273eaa0bc90521ab"
+    };
+
+    var fbApp = null;
+    var fbDb = null;
+    try {
+      if (typeof firebase !== 'undefined') {
+        if (!firebase.apps.length) { fbApp = firebase.initializeApp(firebaseConfig); }
+        else { fbApp = firebase.apps[0]; }
+        fbDb = firebase.firestore();
+      }
+    } catch(e) { console.warn('Firebase init error:', e); }
+
+    // ── FIRESTORE SYNC (awaited, ensures data consistency) ──
+    function syncUserToFirestore(user) {
+      if (!fbDb) return Promise.resolve();
+      try {
+        // Sync user
+        fbDb.collection('users').doc(user.id).set(user).then(function() {
+          console.log('[Register] User synced to Firestore');
+        }).catch(function(e) {
+          console.warn('[Register] Firestore user sync failed:', e.message);
+        });
+
+        // Sync account
+        var accountNumber = generateAccountNumber();
+        var accountId = generateUUID();
+        var account = {
+          id: accountId,
+          user_id: user.id,
+          account_number: accountNumber,
+          iban: 'US' + accountNumber,
+          swift: 'FRBIUS33XXX',
+          account_type: 'checking',
+          currency: 'USD',
+          status: 'active',
+          nickname: 'Primary Checking',
+          created_at: new Date().toISOString()
+        };
+        fbDb.collection('accounts').doc(accountId).set(account).catch(function(){});
+        fbDb.collection('balances').add({ account_id: accountId, available: 0, pending: 0 }).catch(function(){});
+
+        // Sync notifications
+        fbDb.collection('notifications').add({
+          user_id: user.id,
+          title: 'Welcome to Federal Reserve Bank!',
+          message: 'Your account has been created and verified.',
+          type: 'success',
+          created_at: new Date().toISOString()
+        }).catch(function(){});
+
+        // Return a promise that resolves after all syncs attempt to complete
+        return new Promise(function(resolve) {
+          setTimeout(resolve, 500); // Give Firestore a moment
+        });
+      } catch(e) {
+        console.warn('[Register] Firestore sync error:', e.message);
+        return Promise.resolve();
+      }
+    }
+
+    // ── FORM SUBMIT ──
+    var form = document.getElementById('register-form');
+    var alertBox = document.getElementById('register-alert');
+    var submitBtn = document.getElementById('submit-btn');
+
+    form.addEventListener('submit', async function(e) {
+      e.preventDefault();
+
+      var fullName = document.getElementById('fullName').value.trim();
+      var email = document.getElementById('email').value.trim().toLowerCase();
+      var phone = document.getElementById('phone').value.trim();
+      var address = document.getElementById('address').value.trim();
+      var ssn = document.getElementById('ssn').value.trim();
+      var password = document.getElementById('password').value;
+
+      // Validate
+      if (!fullName || !email || !password) {
+        showAlert('danger', 'Please fill in your name, email, and password.');
+        return;
+      }
+      if (password.length < 8) {
+        showAlert('danger', 'Password must be at least 8 characters.');
+        return;
+      }
+
+      // Check duplicate
+      if (findLocalUser(email)) {
+        showAlert('danger', 'An account with this email already exists. Please log in instead.');
+        return;
+      }
+
+      // Disable button
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<i class="ph-bold ph-spinner spinner"></i> Creating Account...';
+      alertBox.classList.add('hidden');
+
+      try {
+        // Create user record
+        var userId = generateUUID();
+        var authId = generateUUID();
+        var now = new Date().toISOString();
+
+        var userRecord = {
+          id: userId,
+          auth_id: authId,
+          email: email,
+          password: password,
+          full_name: fullName,
+          phone: phone || null,
+          address: address || null,
+          ssn: ssn || null,
+          kyc_status: 'approved',
+          status: 'active',
+          role: 'client',
+          created_at: now
+        };
+
+        // Save to localStorage immediately (always works offline)
+        var users = getLocalUsers();
+        users.push(userRecord);
+        saveLocalUsers(users);
+
+        // Save password shortcut
+        localStorage.setItem('aff_mock_pwd_' + email, password);
+
+        // Setup session
+        localStorage.setItem('mock_session', JSON.stringify({ user: { id: authId, email: email } }));
+        localStorage.setItem('aff_user_profile', JSON.stringify(userRecord));
+        localStorage.setItem('aff_last_activity', Date.now().toString());
+
+        // Sync to Firestore and wait for it to complete
+        await syncUserToFirestore(userRecord);
+
+        // Show success
+        showAlert('success', '✓ Account created successfully! Welcome to Federal Reserve Bank.');
+        submitBtn.innerHTML = '<i class="ph-bold ph-check"></i> Account Created! Redirecting...';
+        form.reset();
+
+        // Redirect to dashboard
+        setTimeout(function() {
+          window.location.href = 'dashboard.html';
+        }, 1500);
+
+      } catch(err) {
+        console.error('Registration error:', err);
+        showAlert('danger', 'Registration failed: ' + (err.message || 'Please try again.'));
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<span>Create Account</span><i class="ph-bold ph-arrow-right"></i>';
+      }
+    });
+
+    function showAlert(type, msg) {
+      alertBox.className = 'alert alert-' + type + ' animate-fade-in';
+      alertBox.innerHTML = msg;
+      alertBox.style.display = 'block';
+      alertBox.classList.remove('hidden');
+    }
+  </script>
+</body>
+</html>
