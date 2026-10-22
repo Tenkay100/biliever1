@@ -170,18 +170,10 @@
       }
     } catch(e) { console.warn('Firebase init error:', e); }
 
-    // ── FIRESTORE SYNC (awaited, ensures data consistency) ──
-    function syncUserToFirestore(user) {
-      if (!fbDb) return Promise.resolve();
+    // ── FIRESTORE SYNC (properly awaited) ──
+    async function syncUserToFirestore(user) {
+      if (!fbDb) return;
       try {
-        // Sync user
-        fbDb.collection('users').doc(user.id).set(user).then(function() {
-          console.log('[Register] User synced to Firestore');
-        }).catch(function(e) {
-          console.warn('[Register] Firestore user sync failed:', e.message);
-        });
-
-        // Sync account
         var accountNumber = generateAccountNumber();
         var accountId = generateUUID();
         var account = {
@@ -196,25 +188,24 @@
           nickname: 'Primary Checking',
           created_at: new Date().toISOString()
         };
-        fbDb.collection('accounts').doc(accountId).set(account).catch(function(){});
-        fbDb.collection('balances').add({ account_id: accountId, available: 0, pending: 0 }).catch(function(){});
 
-        // Sync notifications
-        fbDb.collection('notifications').add({
+        await fbDb.collection('users').doc(user.id).set(user);
+        console.log('[Register] User saved to Firestore successfully.');
+
+        await fbDb.collection('accounts').doc(accountId).set(account).catch(function(e){ console.warn('Account sync:', e); });
+        await fbDb.collection('balances').add({ account_id: accountId, available: 0, pending: 0 }).catch(function(e){ console.warn('Balance sync:', e); });
+        await fbDb.collection('notifications').add({
           user_id: user.id,
           title: 'Welcome to Federal Reserve Bank!',
           message: 'Your account has been created and verified.',
           type: 'success',
           created_at: new Date().toISOString()
-        }).catch(function(){});
-
-        // Return a promise that resolves after all syncs attempt to complete
-        return new Promise(function(resolve) {
-          setTimeout(resolve, 500); // Give Firestore a moment
-        });
+        }).catch(function(e){ console.warn('Notification sync:', e); });
       } catch(e) {
-        console.warn('[Register] Firestore sync error:', e.message);
-        return Promise.resolve();
+        console.error('[Register] Firestore user sync failed:', e);
+        if (e && e.code === 'permission-denied') {
+          console.warn('NOTE: Firebase Firestore rules blocked write. Ensure Firestore rules are set to allow read/write.');
+        }
       }
     }
 
